@@ -29,8 +29,8 @@ Version 1 of preprocessed file columns:
 * SARS-Cov Panel:
     * `any_sars` - 'Y'/'N' SARS-Cov
     * `sars_ct` - raw Ct value of any of the RVP viruses (mean of all the tests in case of multiple tests)
-    * `sars_ct_imp` - Ct values with imputed NA: NA -> Inf
-    * `sars_ct_is_na` - 'Y'/'N', whether original Ct value is NA
+    * `sars_ct_imp_value` - Ct values with imputed NA: NA -> Inf (for computation where NA is removed automatically)
+    * `sars_ct_imp_is_na` - 'Y'/'N', whether original Ct value is NA (meant to be used together with `sars_ct_imp_value`)
 * Bacterial panel:
     * `any_bacteria` - 'Y'/'N', any of the bacteria
     * `bac_n` - number of bacteria coinfections
@@ -42,3 +42,5 @@ Version 1 of preprocessed file columns:
     * `bac_min_ct` - min Ct value (ignoring NA) of RVP panel (NA in case of none)
     * `bac_[pneu | influ | catarr]_ct_imp` - Ct values with imputed NA: NA -> Inf
     * `bac_[pneu | influ | catarr]_ct_is_na` - 'Y'/'N', whether original Ct value is NA
+* viral and bacterial coinfection:
+    * `vir_bac_coinfect` - 'none' if no infection, 'only_[vir|bac]' if just viral or bacterial infection, 'both' if both viral and bacterial co-infection
