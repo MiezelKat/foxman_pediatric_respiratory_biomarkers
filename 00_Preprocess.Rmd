@@ -15,7 +15,7 @@ library(mediation)
 library(mice)
 library(GGally)
 
-data_raw = read.csv("./data__raw/main_raw_Oct_17.csv", stringsAsFactors=T)
+data_raw = read.csv("./data__raw/main_raw_Dec_09.csv", stringsAsFactors=T)
 ```
 
 A couple of decisions:
@@ -76,6 +76,8 @@ data_filt = data_raw %>%
        age = Age..decimals.,
        cxcl10 = CXCL10..pg.mL..with.LOD,
        il_1b = IL.1B..pg.mL..with.LOD,
+       il_1b_ella = IL1B.ELLA, # new meassure for 5 year olds
+       tfna_ella = TNFA..ELLA., # new meassure for 5 year olds
        sars_interpret = SARS.CoV.2..COVID.19..Interpretation,
        sars_roche_orf_ct = Roche.cobas...ORF1ab,
        sars_roche_e_ct = Roche.cobas...E,
@@ -102,9 +104,11 @@ Preprocessing the following domains:
 
 ```{r}
 data_pp_demo = data_filt %>%
-  dplyr::select(study_code, gender, age, patient_present, cxcl10, il_1b ) %>%
+  dplyr::select(study_code, gender, age, patient_present, cxcl10, il_1b, il_1b_ella, tfna_ella ) %>%
   mutate(cxcl10_log = log(cxcl10), .after = cxcl10) %>%
   mutate(il_1b_log = log(il_1b), .after = il_1b) %>%
+  mutate(il_1b_ella_log = log(il_1b_ella), .after = il_1b_ella) %>%
+  mutate(tfna_ella_log = log(tfna_ella), .after = tfna_ella) %>%
   mutate(symptomatic = ifelse(patient_present == "ARI" | patient_present == "PARI", "Y", "N"), .after = patient_present) %>%
   mutate(symptomatic = as.factor(symptomatic)) %>%
   dplyr::select(-patient_present)
@@ -341,7 +345,8 @@ Calculate viral/bacterial infection status (none, just_virus, just_bacteria, bot
 data_pp_all = data_pp_all %>%
   mutate(vir_bac_coinfect = ifelse(any_virus == "Y", 
                                    ifelse(any_bacteria == "Y", "both", "only_vir"),
-                                   ifelse(any_bacteria == "Y", "only_bac", "none")))
+                                   ifelse(any_bacteria == "Y", "only_bac", "none")),
+         sars_only = ifelse(any_sars == "Y", ifelse(any_rvp == "N", "Y", "N"), "N"))
 
 data_pp_all = data_pp_all %>%
   rowwise() %>%
@@ -355,7 +360,7 @@ data_pp_all = data_pp_all %>%
     # viral_avg_ct = ifelse(viral_avg_ct < 0, NA, viral_avg_ct),
     #    viral_max_ct = ifelse(viral_max_ct < 0, NA, viral_max_ct),
        viral_min_ct = ifelse(viral_min_ct == Inf, NA, viral_min_ct))
-data_pp_vir
+data_pp_all
 ```
 
 

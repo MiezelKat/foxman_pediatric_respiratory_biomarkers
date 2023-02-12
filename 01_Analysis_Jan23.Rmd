@@ -1,0 +1,338 @@
+---
+title: "New Analysis - Mediation of CXCL10 (Jan 12, 2023)"
+output:
+  html_document: 
+    toc: true
+    toc_float: true
+    toc_collapsed: false
+    toc_depth: 3
+    number_sections: false
+    # theme: lumen
+    # df_print: paged
+---
+
+```{r setup, message = FALSE,warning = FALSE,include = FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  echo=FALSE
+)
+library(scales)
+library(dplyr)
+library(arsenal)
+library(ggplot2)
+library(caret)
+library(InformationValue)
+library(tableHTML)
+# library(pROC)
+# library(ROCR)
+library(tidyr)
+library(mediation)
+library(arsenal)
+library(mice)
+library(GGally)
+library(rstatix)
+library(ggpubr)
+library(mediation)
+library(labelled)
+library(gtools)
+library(shape)
+
+TTEST_CORRECTION = "holm"
+BOX_CAPTION = "none"
+if (TTEST_CORRECTION == "BH"){
+  BOX_CAPTION = "corrected p values (Benjamini & Hochberg (1995))"
+}else if (TTEST_CORRECTION == "bonferroni"){
+  BOX_CAPTION = "corrected p values (Bonferroni"
+}else if (TTEST_CORRECTION == "holm"){
+  BOX_CAPTION = "corrected p values (Holm (1979))"
+}else if (TTEST_CORRECTION == "none"){
+  BOX_CAPTION = ""
+}
+
+var.map = c(
+  age= "Age",
+  gender = "Gender",
+  symptomatic= "Symptomatic status",
+  cxcl10= "CXCL10",
+  cxcl10_log= "CXCL10 (log)",
+  il_1b= "IL-1b",
+  il_1b_log= "IL-1b (log)",
+  any_virus= "Any viral infection",
+  virus_n= "n viral infections",
+  any_rvp= "any RVP infection",
+  rvp_n= "n RVP",
+  rvp_any_adeno= "Adeno",
+  rvp_any_rv= "RV",
+  rvp_any_hmpv= "HMVP",
+  rvp_any_cov229= "CoV-229E/OC43",
+  rvp_any_covnl63= "CoV-NL63",
+  rvp_any_flu_a= "Flu A",
+  rvp_any_piv= "PIV",
+  rvp_any_rsv= "RSV",
+  any_sars= "SARS CoV-2 positive",
+  any_bacteria= "Any bacterial infection",
+  bac_any_pneu= "S. pneumoniae",
+  bac_any_influ= "H. influenzae",
+  bac_any_catarr= "M. catarrhalis",
+  albumin_ct= "Albumin Ct",
+  vir_bac_coinfect= "Viral/bacterial coinfection",
+  viral_min_ct = "Min Viral Ct",
+  only_bac = "only bacterial",
+  only_vir = "only viral",
+  only_covid = "only COVID (ignoring bacteria)"
+)
+
+data = read.csv(file = "./data__processed/full-processed-v2.csv", stringsAsFactors = T)
+
+data = data %>%
+  mutate(vir_bac_coinfect = factor(as.character(vir_bac_coinfect), levels = c("none", "only_bac", "only_vir", "both"))) %>%
+  # filter(any_bacteria != "") %>%
+  filter(albumin_ct < 33) %>%
+  mutate(any_bacteria = as.factor(as.character(any_bacteria))) 
+  # mutate(viral_min_ct = ifelse(is.na(viral_min_ct), 45, viral_min_ct))
+
+
+data = set_variable_labels(.data = data, .labels = as.list(var.map),  .strict = F)
+
+```
+
+# Sample Overview
+
+The dataset will be filtered for individuals with _*Albumin CT value below 33*_. The participant characteristics for this set:
+
+```{r results="asis"}
+data.temp = data
+vars_demo <- paste(c("gender", "age", "cxcl10", "il_1b", "viral_min_ct", "albumin_ct", "any_virus", "any_rvp", "any_sars", "any_bacteria"), collapse=" + ")
+
+tab_demo = tableby(as.formula(paste('  ~', vars_demo)), data = data)
+
+summary(tab_demo)
+```
+
+# Mediation Analysis of Age to CXCL10 by viral pathogen 'strength' {.tabset}
+
+More information on how to perform the mediation analysis can be found here:
+
+-   <https://towardsdatascience.com/doing-and-reporting-your-first-mediation-analysis-in-r-2fe423b92171>
+-   <https://data.library.virginia.edu/introduction-to-mediation-analysis/>
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+data.mediation.viral = data %>% 
+  filter(!is.na(viral_min_ct)) 
+
+data.mediation.viral = set_variable_labels(.data = data.mediation.viral, .labels = as.list(var.map),  .strict = F)
+```
+
+Mediation analysis were viral pathogen strength (i.e., lowest viral (either RVP or SARS-CoV) Ct value) mediates the relationship of age on CXCL10 (log-transformed). It is on virus positive samples only ($n =$ `r nrow(data.mediation.viral)`). 
+
+Nomenclature:
+
+-   **dependent variable**: *CXCL10* is the outcome or dependent variable
+-   **independent variable**: *age* is the independent variable that we hypothethise has an effect on CXCL10
+-   **mediator**: *min. viral Ct* (i.e., the lowest Ct value from the RVP or SARS-CoV panel)
+
+```{r}
+model.0 = glm(cxcl10_log~age, data=data.mediation.viral)
+
+model.m = lm(viral_min_ct~age, data=data.mediation.viral)
+
+model.y = lm(cxcl10_log ~ viral_min_ct + age,  data=data.mediation.viral)
+```
+
+```{r message=FALSE, warning=FALSE}
+# bootstrapping (1000 samples)
+full.mediation.model = mediate(model.m, model.y, treat='age', mediator='viral_min_ct', boot=T)
+```
+
+
+**Conclusion:**
+
+The effect of *age* on *CXCL10 (log)* was fully mediated via the viral pathogen strength (i.e., *min Viral Ct* for both RVP and SARS-Cov). Below we report the regression coefficients (including their significance (non-corrected)). The direct effect of *age* on *CXCL10* is `r round(model.0$coefficients["age"], 3)`; `r pvalue(coef(summary(model.0))["age","Pr(>|t|)"], add_p = T)` while the conditional effect (when mediated by *Min viral Ct*) of *age* on *CXCL10* is `r round(model.y$coefficients["age"], 3)`; `r pvalue(coef(summary(model.y))["age","Pr(>|t|)"], add_p = T)`. The indirect effect (i.e., mediated effect) was (`r round(model.m$coefficients["age"], 2)`)\*(`r round(model.y$coefficients["viral_min_ct"], 2)`) = `r round(model.m$coefficients["age"] * model.y$coefficients["viral_min_ct"],2)`. We tested the significance of this indirect effect using bootstrapping procedures - using `r length(full.mediation.model$d0.sims)` bootstrapped samples. The bootstrapped unstandardized indirect effect was `r round(full.mediation.model$d0, 2)`, and the 95% confidence interval ranged from `r round(full.mediation.model$d0.ci["2.5%"],2)` to `r round(full.mediation.model$d0.ci["97.5%"], 2)`. Thus, the indirect effect was statistically significant (`r pvalue(full.mediation.model$d0.p, add_p = T)`).
+
+```{r warning=FALSE}
+library(diagram)
+dia.data <- c(0, paste0("'", round(model.m$coefficients["age"], 2), stars.pval(coef(summary(model.m))["age","Pr(>|t|)"]), "'"), # effect main on mediator
+          0,
+          0, 0, 0,
+          paste0("'", round(model.y$coefficients["viral_min_ct"], 2), stars.pval(coef(summary(model.y))["viral_min_ct","Pr(>|t|)"]), "'"), # mediator on target
+          paste0("'", round(model.0$coefficients["age"], 2), stars.pval(coef(summary(model.0))["age","Pr(>|t|)"]), " (", # main on target without mediator
+                 round(model.y$coefficients["age"], # main on target with mediator
+                       2), stars.pval(coef(summary(model.y))["age","Pr(>|t|)"]), ")'"), 0)
+M<- matrix (nrow=3, ncol=3, byrow = TRUE, data=dia.data)
+plot<- plotmat (M, pos=c(1,2),
+                name= c( "Min Viral Ct\n(mediator)","Age\n(IV)", "CXCL10 (log)\n(DV)"),
+                box.type = "rect", box.size = 0.12, box.prop=0.5,  curve=0) 
+```
+
+## Sample Statistics
+
+For this analysis, we filtered participants for anyone who is **virus positive**, i.e., has a positive SARS-CoV or RVP test ($n =$ `r nrow(data.mediation.viral)`).
+
+```{r results="asis"}
+vars_demo <- paste(c("gender", "age", "cxcl10", "il_1b", "viral_min_ct", "albumin_ct", "any_virus", "any_rvp", "any_sars", "any_bacteria"), collapse=" + ")
+
+tab_demo = tableby(as.formula(paste('  ~', vars_demo)), data = data.mediation.viral)
+
+summary(tab_demo)
+```
+
+
+## Direct effect
+
+The direct, unmediated relationship of *age* on *CXCL10*. The direct effect is `r round(model.0$coefficients["age"], 3)`; `r pvalue(coef(summary(model.0))["age","Pr(>|t|)"], add_p = T)`.
+
+Full model details:
+
+```{r }
+summary(model.0)
+```
+
+## IV - Mediator
+
+The first indirect effect of the independent variable *age* on the mediator *Min viral Ct* is `r round(model.m$coefficients["age"], 3)`; `r pvalue(coef(summary(model.m))["age","Pr(>|t|)"], add_p = T)`.
+
+*Note:* For a mediation to take place, the IV must significantly impact the mediator. This is true in our case and supports the mediation analysis.
+
+```{r}
+summary(model.m)
+```
+
+## Mediator - DV
+
+The effects of *age* and *min viral Ct* are `r round(model.y$coefficients["age"], 3)` (`r pvalue(coef(summary(model.y))["age","Pr(>|t|)"], add_p = T)`) and `r round(model.y$coefficients["viral_min_ct"], 3)` (`r pvalue(coef(summary(model.y))["viral_min_ct","Pr(>|t|)"], add_p = T)`) respectively.
+
+*Note:* This part is supposed to confirm that the mediator affects the dependent variable while controlling for the independent variable. This means, that for a mediation to take place, the mediator must explain more or other parts of the variance in the dependent variable than the independent variable. If the effect of the IV (*age* in our case) is not significant any more, the mediation through the mediator (*min viral Ct* in our case) is confirmed.
+
+```{r}
+summary(model.y)
+```
+
+## Casual Mediation Analysis
+
+Explanation of the terms ([source](https://towardsdatascience.com/doing-and-reporting-your-first-mediation-analysis-in-r-2fe423b92171)):
+
+* **ACME** stands for average causal mediation effects. This is the indirect effect of the IV on the DV that goes through the mediator. Note that it estimated this effect is exactly (the effect of the IV on the mediator) times (the mediator's effect on the DV).
+* **ADE** stands for average direct effects. It describes the direct effect of the IV on the DV when controlling for the mediator.
+* **Total Effect** stands for the total effect (direct + indirect) of the IV onto the DV. We can also get it by simply adding the ACME and the ADE to receive the total effect. 
+* **Prop. Mediated** describes the proportion of the effect of the IV on the DV that goes through the mediator.
+
+```{r}
+summary(full.mediation.model)
+```
+
+# Mediation Analysis of Age to CXCL10 by SARS-Cov pathogen 'strength' {.tabset}
+
+```{r echo=FALSE}
+data.mediation.covid = data %>% 
+  filter(!is.na(sars_ct)) 
+
+data.mediation.covid = set_variable_labels(.data = data.mediation.covid, .labels = as.list(var.map),  .strict = F)
+```
+
+Mediation analysis were SARS-CoV pathogen strength (i.e., SARS-CoV Ct value) mediates the relationship of age on CXCL10 (log-transformed). It is on SARS-CoV positive samples only ($n =$ `r nrow(data.mediation.covid)`). 
+
+Nomenclature:
+
+-   **dependent variable**: *CXCL10* is the outcome or dependent variable
+-   **independent variable**: *age* is the independent variable that we hypothethise has an effect on CXCL10
+-   **mediator**: *SARS-CoV Ct*
+
+```{r}
+model.0 = glm(cxcl10_log~age, data=data.mediation.covid)
+
+model.m = lm(sars_ct~age, data=data.mediation.covid)
+
+model.y = lm(cxcl10_log ~ sars_ct + age,  data=data.mediation.covid)
+```
+
+```{r message=FALSE, warning=FALSE}
+# bootstrapping (1000 samples)
+full.mediation.model = mediate(model.m, model.y, treat='age', mediator='sars_ct', boot=T)
+```
+
+
+**Conclusion:**
+
+The effect of *age* on *CXCL10 (log)* was fully mediated via the SARS-CoV pathogen strength (i.e., *SARS-CoV Ct*). Below we report the regression coefficients (including their significance (non-corrected)). The direct effect of *age* on *CXCL10* is `r round(model.0$coefficients["age"], 3)`; `r pvalue(coef(summary(model.0))["age","Pr(>|t|)"], add_p = T)` while the conditional effect (when mediated by *SARS-CoV Ct*) of *age* on *CXCL10* is `r round(model.y$coefficients["age"], 3)`; `r pvalue(coef(summary(model.y))["age","Pr(>|t|)"], add_p = T)`. The indirect effect (i.e., mediated effect) was (`r round(model.m$coefficients["age"], 2)`)\*(`r round(model.y$coefficients["sars_ct"], 2)`) = `r round(model.m$coefficients["age"] * model.y$coefficients["sars_ct"],2)`. We tested the significance of this indirect effect using bootstrapping procedures - using `r length(full.mediation.model$d0.sims)` bootstrapped samples. The bootstrapped unstandardized indirect effect was `r round(full.mediation.model$d0, 2)`, and the 95% confidence interval ranged from `r round(full.mediation.model$d0.ci["2.5%"],2)` to `r round(full.mediation.model$d0.ci["97.5%"], 2)`. Thus, the indirect effect was statistically significant (`r pvalue(full.mediation.model$d0.p, add_p = T)`).
+
+
+```{r warning=FALSE}
+library(diagram)
+dia.data <- c(0, paste0("'", round(model.m$coefficients["age"], 2), stars.pval(coef(summary(model.m))["age","Pr(>|t|)"]), "'"), # effect main on mediator
+          0,
+          0, 0, 0,
+          paste0("'", round(model.y$coefficients["sars_ct"], 2), stars.pval(coef(summary(model.y))["sars_ct","Pr(>|t|)"]), "'"), # mediator on target
+          paste0("'", round(model.0$coefficients["age"], 2), stars.pval(coef(summary(model.0))["age","Pr(>|t|)"]), " (", # main on target without mediator
+                 round(model.y$coefficients["age"], # main on target with mediator
+                       2), stars.pval(coef(summary(model.y))["age","Pr(>|t|)"]), ")'"), 0)
+M<- matrix (nrow=3, ncol=3, byrow = TRUE, data=dia.data)
+plot<- plotmat (M, pos=c(1,2),
+                name= c( "SARS-CoV Ct\n(mediator)","Age\n(IV)", "CXCL10 (log)\n(DV)"),
+                box.type = "rect", box.size = 0.12, box.prop=0.5,  curve=0) 
+```
+
+## Sample Statistics
+
+For this analysis, we filtered participants for anyone who is **SARS-CoV positive** ($n =$ `r nrow(data.mediation.covid)`).
+
+```{r results="asis"}
+vars_demo <- paste(c("gender", "age", "cxcl10", "il_1b", "sars_ct", "albumin_ct", "any_virus", "any_rvp", "any_sars", "any_bacteria"), collapse=" + ")
+
+tab_demo = tableby(as.formula(paste('  ~', vars_demo)), data = data.mediation.covid)
+
+summary(tab_demo)
+```
+
+
+## Direct effect
+
+The direct, unmediated relationship of *age* on *CXCL10*. The direct effect is `r round(model.0$coefficients["age"], 3)`; `r pvalue(coef(summary(model.0))["age","Pr(>|t|)"], add_p = T)`.
+
+Full model details:
+
+```{r }
+summary(model.0)
+```
+
+## IV - Mediator
+
+The first indirect effect of the independent variable *age* on the mediator *SARS-CoV Ct* is `r round(model.m$coefficients["age"], 3)`; `r pvalue(coef(summary(model.m))["age","Pr(>|t|)"], add_p = T)`.
+
+*Note:* For a mediation to take place, the IV must significantly impact the mediator. This is true in our case and supports the mediation analysis.
+
+```{r}
+summary(model.m)
+```
+
+## Mediator - DV
+
+The effects of *age* and *SARS-CoV Ct* are `r round(model.y$coefficients["age"], 3)` (`r pvalue(coef(summary(model.y))["age","Pr(>|t|)"], add_p = T)`) and `r round(model.y$coefficients["sars_ct"], 3)` (`r pvalue(coef(summary(model.y))["sars_ct","Pr(>|t|)"], add_p = T)`) respectively.
+
+*Note:* This part is supposed to confirm that the mediator affects the dependent variable while controlling for the independent variable. This means, that for a mediation to take place, the mediator must explain more or other parts of the variance in the dependent variable than the independent variable. If the effect of the IV (*age* in our case) is not significant any more, the mediation through the mediator (*SARS-CoV Ct* in our case) is confirmed.
+
+```{r}
+summary(model.y)
+```
+
+## Casual Mediation Analysis
+
+Explanation of the terms ([source](https://towardsdatascience.com/doing-and-reporting-your-first-mediation-analysis-in-r-2fe423b92171)):
+
+* **ACME** stands for average causal mediation effects. This is the indirect effect of the IV on the DV that goes through the mediator. Note that it estimated this effect is exactly (the effect of the IV on the mediator) times (the mediator's effect on the DV).
+* **ADE** stands for average direct effects. It describes the direct effect of the IV on the DV when controlling for the mediator.
+* **Total Effect** stands for the total effect (direct + indirect) of the IV onto the DV. We can also get it by simply adding the ACME and the ADE to receive the total effect. 
+* **Prop. Mediated** describes the proportion of the effect of the IV on the DV that goes through the mediator.
+
+```{r}
+summary(full.mediation.model)
+```
+
+
+
+
+
+
+
+
