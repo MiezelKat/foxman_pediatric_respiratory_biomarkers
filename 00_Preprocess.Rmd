@@ -15,7 +15,7 @@ library(mediation)
 library(mice)
 library(GGally)
 
-data_raw = read.csv("./data__raw/main_raw_Dec_09.csv", stringsAsFactors=T)
+data_raw = read.csv("./data__raw/main_raw_Feb_24.csv", stringsAsFactors=T)
 ```
 
 A couple of decisions:
@@ -51,22 +51,29 @@ Filtering and renaming:
 data_filt = data_raw %>%
   # remove stuff we don't need
   dplyr::select(-c(
-    RVP.data, # it contains badly coded data from the other columns
-    Ct.value, # it contains badly coded data from the other columns
-    Patient.Class, # dont think we need that
-    CXCL10..Ella., # We use the LOD one
-    IL.1B..pg.mL.# We use the LOD one
+    Viral.Infection,
+    Patient.Class # dont think we need that
     )) %>%
   rename(study_code = Study.code,
+       cxcl10 = CXCL10,
+       cxcl10_log = Log10CXCL10,
+       il_1b = IL1B.ELLA,
+       il_1b_log = LOG.IL1B,                                                                                                                    
+       tfna = TNFA..ELLA.,
+       tfna_log = LOG.TNFA,
        any_virus = Any.virus,
+       viral_min_ct = Min.Virus.CT,
+       sars_ct = SARS.COV.2,
        rvp_adeno_ct = Adeno,
        rvp_rv_ct = RV,
        rvp_hmpv_ct = HMPV,
-       rvp_cov229_ct = CoV.229E.OC43,
-       rvp_covnl63_ct = CoV.NL63,
        rvp_flu_a_ct = Flu.A,
-       rvp_piv_ct = PIV,
+       rvp_flu_b_ct = Flu.B,
+       rvp_cov229_ct = CoV.229E.OC43,
+       rvp_covnl63_ct = CoV.NL63.HKU1,
+       rvp_piv123_ct = PIV123,
        rvp_rsv_ct = RSV,
+       rvp_para4_ct = Para.4,                                                    
        any_bacteria = Any.Bacteria,
        bac_pneu_ct = S..pneumoniae.ct,
        bac_influ_ct = H..influenzae.ct,
@@ -74,305 +81,311 @@ data_filt = data_raw %>%
        albumin_ct = Albumin.Ct,
        gender = Gender,
        age = Age..decimals.,
-       cxcl10 = CXCL10..pg.mL..with.LOD,
-       il_1b = IL.1B..pg.mL..with.LOD,
-       il_1b_ella = IL1B.ELLA, # new meassure for 5 year olds
-       tfna_ella = TNFA..ELLA., # new meassure for 5 year olds
-       sars_interpret = SARS.CoV.2..COVID.19..Interpretation,
-       sars_roche_orf_ct = Roche.cobas...ORF1ab,
-       sars_roche_e_ct = Roche.cobas...E,
-       sars_cepheid_n2_ct = Cepheid.Xpert...N2,
-       sars_cepheid_e_ct = Cepheid.Xpert...E,
-       sars_cdc_ct = CDC.N1..Foxman.Lab.,
        patient_present = Clinical.Presentation.After.Chart.Review.Emergency.Use..ARI..PARI..NRI.
-       )
+       ) %>%
+  mutate(any_sars = ifelse(sars_ct < 40, "Y", "N"),
+         any_rvp = ifelse(rvp_adeno_ct < 40 |
+                           rvp_rv_ct < 40 |
+                           rvp_hmpv_ct < 40 |
+                           rvp_flu_a_ct < 40 |
+                           rvp_flu_b_ct < 40 |
+                           rvp_cov229_ct < 40 |
+                           rvp_covnl63_ct < 40 |
+                           rvp_piv123_ct < 40 |
+                           rvp_rsv_ct < 40 |
+                           rvp_para4_ct < 40, "Y", "N"),
+         sars_only = ifelse(any_sars == "Y" & any_rvp == "N", "Y", "N"))
 data_filt
-```
-# Preprocessing subset
 
-Preprocessing the following domains:
-* Demo, status, and outcome biomarkers
-* Virus + COVID
-* Bacterial
-
-## Demo, status, and outcome biomarkers
-
-1. Log transform outcome biomarkers CXCL10 and IL-1b
-2. Coding `symptomatic` based on `patient_present`: 
-  * ARI and PARI -> Y
-  * PREOP and NRI -> N
-
-```{r}
-data_pp_demo = data_filt %>%
-  dplyr::select(study_code, gender, age, patient_present, cxcl10, il_1b, il_1b_ella, tfna_ella ) %>%
-  mutate(cxcl10_log = log(cxcl10), .after = cxcl10) %>%
-  mutate(il_1b_log = log(il_1b), .after = il_1b) %>%
-  mutate(il_1b_ella_log = log(il_1b_ella), .after = il_1b_ella) %>%
-  mutate(tfna_ella_log = log(tfna_ella), .after = tfna_ella) %>%
-  mutate(symptomatic = ifelse(patient_present == "ARI" | patient_present == "PARI", "Y", "N"), .after = patient_present) %>%
-  mutate(symptomatic = as.factor(symptomatic)) %>%
-  dplyr::select(-patient_present)
-
-data_pp_demo
-```
-## Process Covid
-
-```{r}
-data_pp_sars = data_filt %>%
-  dplyr::select(study_code, sars_interpret, sars_roche_orf_ct, sars_roche_e_ct, sars_cepheid_n2_ct,
-                sars_cepheid_e_ct, sars_cdc_ct)
-data_pp_sars
-```
-### Code the test interpretation
-
-Coding `any_sars` based on `sars_interpret`: 
-* Negative and Not Detected -> N
-* Positive and Presumptive Positive -> Y
-
-```{r}
-data_pp_sars = data_pp_sars %>%
-  mutate(any_sars = ifelse(sars_interpret == "Negative" | sars_interpret == "Not Detected", "N", "Y"), .after = sars_interpret) %>%
-  mutate(any_sars = as.factor(any_sars)) %>%
-  dplyr::select(-sars_interpret)
-
-```
-
-### Unify SARS CT
-
-What we want:
-* One variable for SARS Ct
-* A pair of variables where one has NAs replaces with Inf and a boolean for Ct missing
-
-#### Simple (mean)
-
-Calculate the mean: 
-```{r}
-data_pp_sars = data_pp_sars %>%
-  rowwise() %>%
-  mutate(sars_ct = mean(c(sars_roche_orf_ct, sars_roche_e_ct, sars_cepheid_n2_ct, sars_cepheid_e_ct, sars_cdc_ct), na.rm = T), 
-         sars_ct = ifelse(is.na(sars_ct), NA, sars_ct),
-         sars_ct_imp_value = ifelse(is.na(sars_ct), Inf, sars_ct),
-         sars_ct_imp_is_na = as.factor(ifelse(is.na(sars_ct), "Y", "N"))) 
-data_pp_sars
-
-```
-#### Filter
-
-```{r}
-data_pp_sars = data_pp_sars %>% 
-  dplyr::select(study_code, any_sars, sars_ct, sars_ct_imp_value, sars_ct_imp_is_na)
-```
-
-## Process RVP
-
-Steps:
-1. Create a column that contains max/min/mean Ct -> NA Cts is NA in these
-2. For each CT, generate an imputed column and a column encoding NA status:
-3. Create a new column that just contains a y or n for any respiratory virus present (not SARS)
-4. Create a new column that just contains a y or n for any respiratory virus categories
-5. create a column that contains number of rvp infections
-
-
-```{r}
-names(data_filt)
-```
-
-Create a column that contains max/min/mean Ct -> NA Cts is NA in these
-```{r warning=FALSE}
-data_pp_vir = data_filt %>% 
-  dplyr::select(study_code, any_virus, rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct) 
-
-data_pp_vir = data_pp_vir %>%
-  # average and max/min ct
-  rowwise() %>%
-  # calculate
-  mutate(
-    # just min for now
-    # rvp_avg_ct = mean(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct), na.rm = T), 
-    #      rvp_max_ct = max(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct), na.rm = T),
-         rvp_min_ct = min(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct), na.rm = T)) %>%
-  # replace - inf
-  mutate(
-    # just min for now
-    # rvp_avg_ct = ifelse(rvp_avg_ct < 0, NA, rvp_avg_ct),
-    #    rvp_max_ct = ifelse(rvp_max_ct < 0, NA, rvp_max_ct),
-       rvp_min_ct = ifelse(rvp_min_ct == Inf, NA, rvp_min_ct))
-data_pp_vir
-```
-
-For each CT, generate an imputed column and a column encoding NA status:
-```{r}
-data_pp_vir = data_pp_vir %>% mutate( 
-    rvp_adeno_ct_imp_value = ifelse(is.na(rvp_adeno_ct), Inf, rvp_adeno_ct),
-    rvp_adeno_ct_imp_is_na = ifelse(is.na(rvp_adeno_ct), "Y", "N"),
-    
-    rvp_rv_ct_imp_value = ifelse(is.na(rvp_rv_ct), Inf, rvp_rv_ct),
-    rvp_rv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_rv_ct), "Y", "N")),
-    
-    rvp_hmpv_ct_imp_value = ifelse(is.na(rvp_hmpv_ct), Inf, rvp_hmpv_ct),
-    rvp_hmpv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_hmpv_ct), "Y", "N")),
-    
-    rvp_cov229_ct_imp_value = ifelse(is.na(rvp_cov229_ct), Inf, rvp_cov229_ct),
-    rvp_cov229_ct_imp_is_na = as.factor(ifelse(is.na(rvp_cov229_ct), "Y", "N")),
-    
-    rvp_covnl63_ct_imp_value = ifelse(is.na(rvp_covnl63_ct), Inf, rvp_covnl63_ct),
-    rvp_covnl63_ct_imp_is_na = as.factor(ifelse(is.na(rvp_covnl63_ct), "Y", "N")),
-    
-    rvp_flu_a_ct_imp_value = ifelse(is.na(rvp_flu_a_ct), Inf, rvp_flu_a_ct),
-    rvp_flu_a_ct_imp_is_na = as.factor(ifelse(is.na(rvp_flu_a_ct), "Y", "N")),
-    
-    rvp_piv_ct_imp_value = ifelse(is.na(rvp_piv_ct), Inf, rvp_piv_ct),
-    rvp_piv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_piv_ct), "Y", "N")),
-    
-    rvp_rsv_ct_imp_value = ifelse(is.na(rvp_rsv_ct), Inf, rvp_rsv_ct),
-    rvp_rsv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_rsv_ct), "Y", "N"))
-    ) 
-```
-
-Create a new column that just contains a y or n for any respiratory virus present (not SARS)
-```{r}
-data_pp_vir = data_pp_vir %>%
-  mutate(any_rvp = as.factor(ifelse(is.na(rvp_min_ct), "N", "Y")), .after = any_virus)
-```
-
-Create a new column that just contains a y or n for any respiratory virus categories
-```{r}
-data_pp_vir = data_pp_vir %>%
-  mutate(rvp_any_adeno = as.factor(ifelse(is.na(rvp_adeno_ct), "N", "Y")), .before = rvp_adeno_ct) %>%
-  mutate(rvp_any_rv = as.factor(ifelse(is.na(rvp_rv_ct), "N", "Y")), .before = rvp_adeno_ct) %>%
-  mutate(rvp_any_hmpv = as.factor(ifelse(is.na(rvp_hmpv_ct), "N", "Y")), .before = rvp_adeno_ct) %>%
-  mutate(rvp_any_cov229 = as.factor(ifelse(is.na(rvp_cov229_ct), "N", "Y")), .before = rvp_adeno_ct) %>%
-  mutate(rvp_any_covnl63 = as.factor(ifelse(is.na(rvp_covnl63_ct), "N", "Y")), .before = rvp_adeno_ct) %>%
-  mutate(rvp_any_flu_a = as.factor(ifelse(is.na(rvp_flu_a_ct), "N", "Y")), .before = rvp_adeno_ct) %>%
-  mutate(rvp_any_piv = as.factor(ifelse(is.na(rvp_piv_ct), "N", "Y")), .before = rvp_adeno_ct) %>%
-  mutate(rvp_any_rsv = as.factor(ifelse(is.na(rvp_rsv_ct), "N", "Y")), .before = rvp_adeno_ct) 
-```
-
-Create a column that contains number of rvp infections
-
-```{r}
-data_pp_vir = data_pp_vir %>% 
-  ungroup() %>% mutate(rvp_n = rowSums(dplyr::select(., starts_with('rvp_any_')) == 'Y', na.rm = TRUE), .after = any_rvp) 
-data_pp_vir
-```
-
-## Process bacterial
-
-Steps:
-1. Create a column that contains max/min/mean Ct -> NA Cts is NA in these
-2. For each CT, generate an imputed column and a column encoding NA status:
-3. Create a new column that just contains a y or n for any bacterial categories
-4. create a column that contains number of bacterial infections
-
-```{r}
-names(data_filt)
-```
-
-Create a column that contains max/min/mean Ct -> NA Cts is NA in these
-```{r warning=FALSE}
-data_pp_bac = data_filt %>% 
-  dplyr::select(study_code, any_bacteria, bac_pneu_ct, bac_influ_ct, bac_catarr_ct, albumin_ct) 
-
-# since the columns are not numerical -> convert
-data_pp_bac = data_pp_bac %>%
-  # to characters
-  mutate(bac_pneu_ct = as.character(bac_pneu_ct),
-       bac_influ_ct = as.character(bac_influ_ct),
-       bac_catarr_ct = as.character(bac_catarr_ct)) %>%
-  # parse
-  mutate(bac_pneu_ct = ifelse(bac_pneu_ct == "Negative", NA, as.numeric(bac_pneu_ct)),
-         bac_influ_ct = ifelse(bac_influ_ct == "Negative", NA, as.numeric(bac_influ_ct)),
-         bac_catarr_ct = ifelse(bac_catarr_ct == "Negative", NA, as.numeric(bac_catarr_ct)))
-
-data_pp_bac = data_pp_bac %>%
-  # average and max/min ct
-  rowwise() %>%
-  # calculate
-  mutate(
-    # bac_avg_ct = mean(c(bac_pneu_ct, bac_influ_ct, bac_catarr_ct), na.rm = T),
-    #      bac_max_ct = max(c(bac_pneu_ct, bac_influ_ct, bac_catarr_ct), na.rm = T),
-         bac_min_ct = min(c(bac_pneu_ct, bac_influ_ct, bac_catarr_ct), na.rm = T)) %>%
-  # replace - inf
-  mutate(
-    # bac_avg_ct = ifelse(bac_avg_ct < 0, NA, bac_avg_ct),
-    #    bac_max_ct = ifelse(bac_max_ct < 0, NA, bac_max_ct),
-       bac_min_ct = ifelse(bac_min_ct == Inf, NA, bac_min_ct))
-data_pp_bac
-```
-
-For each CT, generate an imputed column and a column encoding NA status:
-```{r}
-data_pp_bac = data_pp_bac %>% 
-  mutate( 
-    bac_pneu_ct_imp_value = ifelse(is.na(bac_pneu_ct), Inf, bac_pneu_ct),
-    bac_pneu_ct_imp_is_na = as.factor(ifelse(is.na(bac_pneu_ct), "Y", "N")),
-    
-    bac_influ_ct_imp_value = ifelse(is.na(bac_influ_ct), Inf, bac_influ_ct),
-    bac_influ_ct_imp_is_na = as.factor(ifelse(is.na(bac_influ_ct), "Y", "N")),
-    
-    bac_catarr_ct_imp_value = ifelse(is.na(bac_catarr_ct), Inf, bac_catarr_ct),
-    bac_catarr_ct_imp_is_na = as.factor(ifelse(is.na(bac_catarr_ct), "Y", "N"))
-    ) 
-```
-
-Create a new column that just contains a y or n for any bacterial categories
-```{r}
-data_pp_bac = data_pp_bac %>%
-  mutate(bac_any_pneu = as.factor(ifelse(is.na(bac_pneu_ct), "N", "Y")), .before = bac_pneu_ct) %>%
-  mutate(bac_any_influ = as.factor(ifelse(is.na(bac_influ_ct), "N", "Y")), .before = bac_pneu_ct) %>%
-  mutate(bac_any_catarr = as.factor(ifelse(is.na(bac_catarr_ct), "N", "Y")), .before = bac_pneu_ct) 
-```
-
-create a column that contains number of bacterial infections
-```{r}
-data_pp_bac = data_pp_bac %>% 
-  ungroup() %>% mutate(bac_n = rowSums(dplyr::select(., starts_with('bac_any_')) == 'Y', na.rm = TRUE), .after = any_bacteria) 
-```
-
-# Merge all subsets together and calc virus coinfections 
-
-```{r}
-data_pp_all = merge(data_pp_demo, data_pp_vir, by = "study_code")
-data_pp_all = merge(data_pp_all, data_pp_sars, by = "study_code")
-data_pp_all = merge(data_pp_all, data_pp_bac, by = "study_code")
-
-data_pp_all = data_pp_all %>%
-  mutate(virus_n = ifelse(any_sars == "Y", rvp_n + 1, rvp_n), .after = any_virus)
-data_pp_all
-```
-Calculate viral/bacterial infection status (none, just_virus, just_bacteria, both)
-```{r}
-data_pp_all = data_pp_all %>%
-  mutate(vir_bac_coinfect = ifelse(any_virus == "Y", 
-                                   ifelse(any_bacteria == "Y", "both", "only_vir"),
-                                   ifelse(any_bacteria == "Y", "only_bac", "none")),
-         sars_only = ifelse(any_sars == "Y", ifelse(any_rvp == "N", "Y", "N"), "N"))
-
-data_pp_all = data_pp_all %>%
-  rowwise() %>%
-  # calculate
-  mutate(
-    # viral_avg_ct = mean(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct, sars_ct), na.rm = T),
-    #      viral_max_ct = max(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct, sars_ct), na.rm = T),
-         viral_min_ct = min(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct, sars_ct), na.rm = T)) %>%
-  # replace - inf
-  mutate(
-    # viral_avg_ct = ifelse(viral_avg_ct < 0, NA, viral_avg_ct),
-    #    viral_max_ct = ifelse(viral_max_ct < 0, NA, viral_max_ct),
-       viral_min_ct = ifelse(viral_min_ct == Inf, NA, viral_min_ct))
-data_pp_all
+write.csv(data_filt, file = "./data__processed/full-processed-v3.csv", row.names = F)
 ```
 
 
+<!-- # Preprocessing subset -->
 
-```{r}
-names(data_pp_all)
-```
+<!-- Preprocessing the following domains: -->
+<!-- * Demo, status, and outcome biomarkers -->
+<!-- * Virus + COVID -->
+<!-- * Bacterial -->
+
+<!-- ## Demo, status, and outcome biomarkers -->
+
+<!-- 1. Log transform outcome biomarkers CXCL10 and IL-1b -->
+<!-- 2. Coding `symptomatic` based on `patient_present`:  -->
+<!--   * ARI and PARI -> Y -->
+<!--   * PREOP and NRI -> N -->
+
+<!-- ```{r} -->
+<!-- data_pp_demo = data_filt %>% -->
+<!--   dplyr::select(study_code, gender, age, patient_present, cxcl10, il_1b, il_1b_ella, tfna_ella ) %>% -->
+<!--   mutate(cxcl10_log = log(cxcl10), .after = cxcl10) %>% -->
+<!--   mutate(il_1b_log = log(il_1b), .after = il_1b) %>% -->
+<!--   mutate(il_1b_ella_log = log(il_1b_ella), .after = il_1b_ella) %>% -->
+<!--   mutate(tfna_ella_log = log(tfna_ella), .after = tfna_ella) %>% -->
+<!--   mutate(symptomatic = ifelse(patient_present == "ARI" | patient_present == "PARI", "Y", "N"), .after = patient_present) %>% -->
+<!--   mutate(symptomatic = as.factor(symptomatic)) %>% -->
+<!--   dplyr::select(-patient_present) -->
+
+<!-- data_pp_demo -->
+<!-- ``` -->
+<!-- ## Process Covid -->
+
+<!-- ```{r} -->
+<!-- data_pp_sars = data_filt %>% -->
+<!--   dplyr::select(study_code, sars_interpret, sars_roche_orf_ct, sars_roche_e_ct, sars_cepheid_n2_ct, -->
+<!--                 sars_cepheid_e_ct, sars_cdc_ct) -->
+<!-- data_pp_sars -->
+<!-- ``` -->
+<!-- ### Code the test interpretation -->
+
+<!-- Coding `any_sars` based on `sars_interpret`:  -->
+<!-- * Negative and Not Detected -> N -->
+<!-- * Positive and Presumptive Positive -> Y -->
+
+<!-- ```{r} -->
+<!-- data_pp_sars = data_pp_sars %>% -->
+<!--   mutate(any_sars = ifelse(sars_interpret == "Negative" | sars_interpret == "Not Detected", "N", "Y"), .after = sars_interpret) %>% -->
+<!--   mutate(any_sars = as.factor(any_sars)) %>% -->
+<!--   dplyr::select(-sars_interpret) -->
+
+<!-- ``` -->
+
+<!-- ### Unify SARS CT -->
+
+<!-- What we want: -->
+<!-- * One variable for SARS Ct -->
+<!-- * A pair of variables where one has NAs replaces with Inf and a boolean for Ct missing -->
+
+<!-- #### Simple (mean) -->
+
+<!-- Calculate the mean:  -->
+<!-- ```{r} -->
+<!-- data_pp_sars = data_pp_sars %>% -->
+<!--   rowwise() %>% -->
+<!--   mutate(sars_ct = mean(c(sars_roche_orf_ct, sars_roche_e_ct, sars_cepheid_n2_ct, sars_cepheid_e_ct, sars_cdc_ct), na.rm = T),  -->
+<!--          sars_ct = ifelse(is.na(sars_ct), NA, sars_ct), -->
+<!--          sars_ct_imp_value = ifelse(is.na(sars_ct), Inf, sars_ct), -->
+<!--          sars_ct_imp_is_na = as.factor(ifelse(is.na(sars_ct), "Y", "N")))  -->
+<!-- data_pp_sars -->
+
+<!-- ``` -->
+<!-- #### Filter -->
+
+<!-- ```{r} -->
+<!-- data_pp_sars = data_pp_sars %>%  -->
+<!--   dplyr::select(study_code, any_sars, sars_ct, sars_ct_imp_value, sars_ct_imp_is_na) -->
+<!-- ``` -->
+
+<!-- ## Process RVP -->
+
+<!-- Steps: -->
+<!-- 1. Create a column that contains max/min/mean Ct -> NA Cts is NA in these -->
+<!-- 2. For each CT, generate an imputed column and a column encoding NA status: -->
+<!-- 3. Create a new column that just contains a y or n for any respiratory virus present (not SARS) -->
+<!-- 4. Create a new column that just contains a y or n for any respiratory virus categories -->
+<!-- 5. create a column that contains number of rvp infections -->
 
 
-```{r}
-write.csv(data_pp_all, file = "./data__processed/full-processed-v2.csv", row.names = F)
-```
+<!-- ```{r} -->
+<!-- names(data_filt) -->
+<!-- ``` -->
+
+<!-- Create a column that contains max/min/mean Ct -> NA Cts is NA in these -->
+<!-- ```{r warning=FALSE} -->
+<!-- data_pp_vir = data_filt %>%  -->
+<!--   dplyr::select(study_code, any_virus, rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct)  -->
+
+<!-- data_pp_vir = data_pp_vir %>% -->
+<!--   # average and max/min ct -->
+<!--   rowwise() %>% -->
+<!--   # calculate -->
+<!--   mutate( -->
+<!--     # just min for now -->
+<!--     # rvp_avg_ct = mean(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct), na.rm = T),  -->
+<!--     #      rvp_max_ct = max(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct), na.rm = T), -->
+<!--          rvp_min_ct = min(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct), na.rm = T)) %>% -->
+<!--   # replace - inf -->
+<!--   mutate( -->
+<!--     # just min for now -->
+<!--     # rvp_avg_ct = ifelse(rvp_avg_ct < 0, NA, rvp_avg_ct), -->
+<!--     #    rvp_max_ct = ifelse(rvp_max_ct < 0, NA, rvp_max_ct), -->
+<!--        rvp_min_ct = ifelse(rvp_min_ct == Inf, NA, rvp_min_ct)) -->
+<!-- data_pp_vir -->
+<!-- ``` -->
+
+<!-- For each CT, generate an imputed column and a column encoding NA status: -->
+<!-- ```{r} -->
+<!-- data_pp_vir = data_pp_vir %>% mutate(  -->
+<!--     rvp_adeno_ct_imp_value = ifelse(is.na(rvp_adeno_ct), Inf, rvp_adeno_ct), -->
+<!--     rvp_adeno_ct_imp_is_na = ifelse(is.na(rvp_adeno_ct), "Y", "N"), -->
+
+<!--     rvp_rv_ct_imp_value = ifelse(is.na(rvp_rv_ct), Inf, rvp_rv_ct), -->
+<!--     rvp_rv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_rv_ct), "Y", "N")), -->
+
+<!--     rvp_hmpv_ct_imp_value = ifelse(is.na(rvp_hmpv_ct), Inf, rvp_hmpv_ct), -->
+<!--     rvp_hmpv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_hmpv_ct), "Y", "N")), -->
+
+<!--     rvp_cov229_ct_imp_value = ifelse(is.na(rvp_cov229_ct), Inf, rvp_cov229_ct), -->
+<!--     rvp_cov229_ct_imp_is_na = as.factor(ifelse(is.na(rvp_cov229_ct), "Y", "N")), -->
+
+<!--     rvp_covnl63_ct_imp_value = ifelse(is.na(rvp_covnl63_ct), Inf, rvp_covnl63_ct), -->
+<!--     rvp_covnl63_ct_imp_is_na = as.factor(ifelse(is.na(rvp_covnl63_ct), "Y", "N")), -->
+
+<!--     rvp_flu_a_ct_imp_value = ifelse(is.na(rvp_flu_a_ct), Inf, rvp_flu_a_ct), -->
+<!--     rvp_flu_a_ct_imp_is_na = as.factor(ifelse(is.na(rvp_flu_a_ct), "Y", "N")), -->
+
+<!--     rvp_piv_ct_imp_value = ifelse(is.na(rvp_piv_ct), Inf, rvp_piv_ct), -->
+<!--     rvp_piv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_piv_ct), "Y", "N")), -->
+
+<!--     rvp_rsv_ct_imp_value = ifelse(is.na(rvp_rsv_ct), Inf, rvp_rsv_ct), -->
+<!--     rvp_rsv_ct_imp_is_na = as.factor(ifelse(is.na(rvp_rsv_ct), "Y", "N")) -->
+<!--     )  -->
+<!-- ``` -->
+
+<!-- Create a new column that just contains a y or n for any respiratory virus present (not SARS) -->
+<!-- ```{r} -->
+<!-- data_pp_vir = data_pp_vir %>% -->
+<!--   mutate(any_rvp = as.factor(ifelse(is.na(rvp_min_ct), "N", "Y")), .after = any_virus) -->
+<!-- ``` -->
+
+<!-- Create a new column that just contains a y or n for any respiratory virus categories -->
+<!-- ```{r} -->
+<!-- data_pp_vir = data_pp_vir %>% -->
+<!--   mutate(rvp_any_adeno = as.factor(ifelse(is.na(rvp_adeno_ct), "N", "Y")), .before = rvp_adeno_ct) %>% -->
+<!--   mutate(rvp_any_rv = as.factor(ifelse(is.na(rvp_rv_ct), "N", "Y")), .before = rvp_adeno_ct) %>% -->
+<!--   mutate(rvp_any_hmpv = as.factor(ifelse(is.na(rvp_hmpv_ct), "N", "Y")), .before = rvp_adeno_ct) %>% -->
+<!--   mutate(rvp_any_cov229 = as.factor(ifelse(is.na(rvp_cov229_ct), "N", "Y")), .before = rvp_adeno_ct) %>% -->
+<!--   mutate(rvp_any_covnl63 = as.factor(ifelse(is.na(rvp_covnl63_ct), "N", "Y")), .before = rvp_adeno_ct) %>% -->
+<!--   mutate(rvp_any_flu_a = as.factor(ifelse(is.na(rvp_flu_a_ct), "N", "Y")), .before = rvp_adeno_ct) %>% -->
+<!--   mutate(rvp_any_piv = as.factor(ifelse(is.na(rvp_piv_ct), "N", "Y")), .before = rvp_adeno_ct) %>% -->
+<!--   mutate(rvp_any_rsv = as.factor(ifelse(is.na(rvp_rsv_ct), "N", "Y")), .before = rvp_adeno_ct)  -->
+<!-- ``` -->
+
+<!-- Create a column that contains number of rvp infections -->
+
+<!-- ```{r} -->
+<!-- data_pp_vir = data_pp_vir %>%  -->
+<!--   ungroup() %>% mutate(rvp_n = rowSums(dplyr::select(., starts_with('rvp_any_')) == 'Y', na.rm = TRUE), .after = any_rvp)  -->
+<!-- data_pp_vir -->
+<!-- ``` -->
+
+<!-- ## Process bacterial -->
+
+<!-- Steps: -->
+<!-- 1. Create a column that contains max/min/mean Ct -> NA Cts is NA in these -->
+<!-- 2. For each CT, generate an imputed column and a column encoding NA status: -->
+<!-- 3. Create a new column that just contains a y or n for any bacterial categories -->
+<!-- 4. create a column that contains number of bacterial infections -->
+
+<!-- ```{r} -->
+<!-- names(data_filt) -->
+<!-- ``` -->
+
+<!-- Create a column that contains max/min/mean Ct -> NA Cts is NA in these -->
+<!-- ```{r warning=FALSE} -->
+<!-- data_pp_bac = data_filt %>%  -->
+<!--   dplyr::select(study_code, any_bacteria, bac_pneu_ct, bac_influ_ct, bac_catarr_ct, albumin_ct)  -->
+
+<!-- # since the columns are not numerical -> convert -->
+<!-- data_pp_bac = data_pp_bac %>% -->
+<!--   # to characters -->
+<!--   mutate(bac_pneu_ct = as.character(bac_pneu_ct), -->
+<!--        bac_influ_ct = as.character(bac_influ_ct), -->
+<!--        bac_catarr_ct = as.character(bac_catarr_ct)) %>% -->
+<!--   # parse -->
+<!--   mutate(bac_pneu_ct = ifelse(bac_pneu_ct == "Negative", NA, as.numeric(bac_pneu_ct)), -->
+<!--          bac_influ_ct = ifelse(bac_influ_ct == "Negative", NA, as.numeric(bac_influ_ct)), -->
+<!--          bac_catarr_ct = ifelse(bac_catarr_ct == "Negative", NA, as.numeric(bac_catarr_ct))) -->
+
+<!-- data_pp_bac = data_pp_bac %>% -->
+<!--   # average and max/min ct -->
+<!--   rowwise() %>% -->
+<!--   # calculate -->
+<!--   mutate( -->
+<!--     # bac_avg_ct = mean(c(bac_pneu_ct, bac_influ_ct, bac_catarr_ct), na.rm = T), -->
+<!--     #      bac_max_ct = max(c(bac_pneu_ct, bac_influ_ct, bac_catarr_ct), na.rm = T), -->
+<!--          bac_min_ct = min(c(bac_pneu_ct, bac_influ_ct, bac_catarr_ct), na.rm = T)) %>% -->
+<!--   # replace - inf -->
+<!--   mutate( -->
+<!--     # bac_avg_ct = ifelse(bac_avg_ct < 0, NA, bac_avg_ct), -->
+<!--     #    bac_max_ct = ifelse(bac_max_ct < 0, NA, bac_max_ct), -->
+<!--        bac_min_ct = ifelse(bac_min_ct == Inf, NA, bac_min_ct)) -->
+<!-- data_pp_bac -->
+<!-- ``` -->
+
+<!-- For each CT, generate an imputed column and a column encoding NA status: -->
+<!-- ```{r} -->
+<!-- data_pp_bac = data_pp_bac %>%  -->
+<!--   mutate(  -->
+<!--     bac_pneu_ct_imp_value = ifelse(is.na(bac_pneu_ct), Inf, bac_pneu_ct), -->
+<!--     bac_pneu_ct_imp_is_na = as.factor(ifelse(is.na(bac_pneu_ct), "Y", "N")), -->
+
+<!--     bac_influ_ct_imp_value = ifelse(is.na(bac_influ_ct), Inf, bac_influ_ct), -->
+<!--     bac_influ_ct_imp_is_na = as.factor(ifelse(is.na(bac_influ_ct), "Y", "N")), -->
+
+<!--     bac_catarr_ct_imp_value = ifelse(is.na(bac_catarr_ct), Inf, bac_catarr_ct), -->
+<!--     bac_catarr_ct_imp_is_na = as.factor(ifelse(is.na(bac_catarr_ct), "Y", "N")) -->
+<!--     )  -->
+<!-- ``` -->
+
+<!-- Create a new column that just contains a y or n for any bacterial categories -->
+<!-- ```{r} -->
+<!-- data_pp_bac = data_pp_bac %>% -->
+<!--   mutate(bac_any_pneu = as.factor(ifelse(is.na(bac_pneu_ct), "N", "Y")), .before = bac_pneu_ct) %>% -->
+<!--   mutate(bac_any_influ = as.factor(ifelse(is.na(bac_influ_ct), "N", "Y")), .before = bac_pneu_ct) %>% -->
+<!--   mutate(bac_any_catarr = as.factor(ifelse(is.na(bac_catarr_ct), "N", "Y")), .before = bac_pneu_ct)  -->
+<!-- ``` -->
+
+<!-- create a column that contains number of bacterial infections -->
+<!-- ```{r} -->
+<!-- data_pp_bac = data_pp_bac %>%  -->
+<!--   ungroup() %>% mutate(bac_n = rowSums(dplyr::select(., starts_with('bac_any_')) == 'Y', na.rm = TRUE), .after = any_bacteria)  -->
+<!-- ``` -->
+
+<!-- # Merge all subsets together and calc virus coinfections  -->
+
+<!-- ```{r} -->
+<!-- data_pp_all = merge(data_pp_demo, data_pp_vir, by = "study_code") -->
+<!-- data_pp_all = merge(data_pp_all, data_pp_sars, by = "study_code") -->
+<!-- data_pp_all = merge(data_pp_all, data_pp_bac, by = "study_code") -->
+
+<!-- data_pp_all = data_pp_all %>% -->
+<!--   mutate(virus_n = ifelse(any_sars == "Y", rvp_n + 1, rvp_n), .after = any_virus) -->
+<!-- data_pp_all -->
+<!-- ``` -->
+<!-- Calculate viral/bacterial infection status (none, just_virus, just_bacteria, both) -->
+<!-- ```{r} -->
+<!-- data_pp_all = data_pp_all %>% -->
+<!--   mutate(vir_bac_coinfect = ifelse(any_virus == "Y",  -->
+<!--                                    ifelse(any_bacteria == "Y", "both", "only_vir"), -->
+<!--                                    ifelse(any_bacteria == "Y", "only_bac", "none")), -->
+<!--          sars_only = ifelse(any_sars == "Y", ifelse(any_rvp == "N", "Y", "N"), "N")) -->
+
+<!-- data_pp_all = data_pp_all %>% -->
+<!--   rowwise() %>% -->
+<!--   # calculate -->
+<!--   mutate( -->
+<!--     # viral_avg_ct = mean(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct, sars_ct), na.rm = T), -->
+<!--     #      viral_max_ct = max(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct, sars_ct), na.rm = T), -->
+<!--          viral_min_ct = min(c(rvp_adeno_ct, rvp_rv_ct, rvp_hmpv_ct, rvp_cov229_ct, rvp_covnl63_ct, rvp_flu_a_ct, rvp_piv_ct, rvp_rsv_ct, sars_ct), na.rm = T)) %>% -->
+<!--   # replace - inf -->
+<!--   mutate( -->
+<!--     # viral_avg_ct = ifelse(viral_avg_ct < 0, NA, viral_avg_ct), -->
+<!--     #    viral_max_ct = ifelse(viral_max_ct < 0, NA, viral_max_ct), -->
+<!--        viral_min_ct = ifelse(viral_min_ct == Inf, NA, viral_min_ct)) -->
+<!-- data_pp_all -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- names(data_pp_all) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- write.csv(data_pp_all, file = "./data__processed/full-processed-v2.csv", row.names = F) -->
+<!-- ``` -->
 
 
 
